@@ -1,0 +1,312 @@
+[
+  {
+    "stage": 0,
+    "bloques_descongelados": "(solo cabeza)",
+    "fraccion_backbone_descongelado": 0.0,
+    "baseline_accuracy": {
+      "media": 0.959,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.5125186615964541,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.1947418308911099,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.5646924393157821,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.6081923702116572,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.8367227907341923,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "stage": 1,
+    "bloques_descongelados": "layer4.1",
+    "fraccion_backbone_descongelado": 0.42237148763406684,
+    "baseline_accuracy": {
+      "media": 0.9861,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.4295754907570424,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.19468625051993949,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.49744243847086134,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.14285714285714288,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.6573226984989535,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "stage": 2,
+    "bloques_descongelados": "layer4.1, layer4.0",
+    "fraccion_backbone_descongelado": 0.751014985712895,
+    "baseline_accuracy": {
+      "media": 0.9869,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.32181000269797416,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.1572557873305911,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.2525381361380527,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.18210783977117087,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.5115666229155575,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "stage": 3,
+    "bloques_descongelados": "layer4.1, layer4.0, layer3.1",
+    "fraccion_backbone_descongelado": 0.8566536679779881,
+    "baseline_accuracy": {
+      "media": 0.9894,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.3232008295245392,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.181356315723825,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.2525381361380527,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.14285714285714288,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.2030277582451134,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "stage": 4,
+    "bloques_descongelados": "layer4.1, layer4.0, layer3.1, layer3.0",
+    "fraccion_backbone_descongelado": 0.9388832580325597,
+    "baseline_accuracy": {
+      "media": 0.988,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.3093125479454436,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.16073090872034487,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.2525381361380527,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.2525381361380527,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.531259374357254,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "stage": 5,
+    "bloques_descongelados": "layer4.1, layer4.0, layer3.1, layer3.0, layer2.1",
+    "fraccion_backbone_descongelado": 0.9653158337771212,
+    "baseline_accuracy": {
+      "media": 0.9885,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.3500053752517587,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.1899322706182806,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.25753937681885636,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.22587697572631282,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.7092970308926194,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "stage": 6,
+    "bloques_descongelados": "layer4.1, layer4.0, layer3.1, layer3.0, layer2.1, layer2.0",
+    "fraccion_backbone_descongelado": 0.9859075890581963,
+    "baseline_accuracy": {
+      "media": 0.9881,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.33471712951276883,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.15149006331557335,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.28571428571428575,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.22587697572631282,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.633952548936476,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "stage": 7,
+    "bloques_descongelados": "layer4.1, layer4.0, layer3.1, layer3.0, layer2.1, layer2.0, layer1.1",
+    "fraccion_backbone_descongelado": 0.9925271855834807,
+    "baseline_accuracy": {
+      "media": 0.9893,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.34416011275526825,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.13772705401994578,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.31943828249996997,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.25753937681885636,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.809022628990221,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "stage": 8,
+    "bloques_descongelados": "layer4.1, layer4.0, layer3.1, layer3.0, layer2.1, layer2.0, layer1.1, layer1.0",
+    "fraccion_backbone_descongelado": 0.9991467821087653,
+    "baseline_accuracy": {
+      "media": 0.9885,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.24324172983466244,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.08633571843000272,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.21428571428571427,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.20824828195876074,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.067119773438466,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "stage": 9,
+    "bloques_descongelados": "layer4.1, layer4.0, layer3.1, layer3.0, layer2.1, layer2.0, layer1.1, layer1.0, stem(conv1+bn1)",
+    "fraccion_backbone_descongelado": 1.0,
+    "baseline_accuracy": {
+      "media": 0.9915,
+      "std": 0.0
+    },
+    "estadisticos": {
+      "mean": {
+        "media": 0.2854971005091811,
+        "std": 0.0
+      },
+      "std": {
+        "media": 0.07910362068525442,
+        "std": 0.0
+      },
+      "median": {
+        "media": 0.2719918966379967,
+        "std": 0.0
+      },
+      "mode": {
+        "media": 0.22587697572631282,
+        "std": 0.0
+      },
+      "H": {
+        "media": 3.2525244273680007,
+        "std": 0.0
+      }
+    }
+  }
+]
