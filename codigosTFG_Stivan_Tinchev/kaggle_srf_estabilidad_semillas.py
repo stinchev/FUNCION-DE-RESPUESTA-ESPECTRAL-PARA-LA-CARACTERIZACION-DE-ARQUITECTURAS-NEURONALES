@@ -22,8 +22,6 @@ import torch.nn as nn
 import torch.nn.functional as Fnn
 import torchvision
 
-_trapz = getattr(np, "trapezoid", None) or np.trapz
-
 def load_mnist_raw():
     return keras.datasets.mnist.load_data()
 
@@ -467,46 +465,16 @@ def fit_isotonic_cdf(normalized_accuracy: np.ndarray) -> np.ndarray:
     y = np.clip(np.asarray(normalized_accuracy, dtype=float), 0.0, 1.0)
     return np.clip(pool_adjacent_violators(y), 0.0, 1.0)
 
-def cdf_statistics(normalized_radius: np.ndarray, cdf_values: np.ndarray) -> dict[str, Any]:
+def extend_to_unit_interval(normalized_radius: np.ndarray, curve_values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     x = np.asarray(normalized_radius, dtype=float)
-    f = np.asarray(cdf_values, dtype=float)
+    f = np.asarray(curve_values, dtype=float)
     if x[0] > 0.0:
         x = np.concatenate([[0.0], x])
         f = np.concatenate([[0.0], f])
     if x[-1] < 1.0:
         x = np.concatenate([x, [1.0]])
         f = np.concatenate([f, [1.0]])
-
-    survival = 1.0 - f
-    mean = float(_trapz(survival, x))
-    second_moment = float(2.0 * _trapz(x * survival, x))
-    variance = max(second_moment - mean ** 2, 0.0)
-    std = float(np.sqrt(variance))
-    median = float(np.interp(0.5, f, x))
-
-    widths_raw = np.diff(x)
-    nonzero = widths_raw > 1e-12
-    density_raw = np.zeros_like(widths_raw)
-    density_raw[nonzero] = np.diff(f)[nonzero] / widths_raw[nonzero]
-    mode_idx = int(np.argmax(density_raw))
-    mode = float(0.5 * (x[mode_idx] + x[mode_idx + 1]))
-
-    widths = widths_raw[nonzero]
-    density = density_raw[nonzero]
-    total_mass = float(np.sum(density * widths))
-    density_norm = density / total_mass if total_mass > 0 else density
-    eps = 1e-12
-    entropy = float(-np.sum(density_norm * widths * np.log(np.maximum(density_norm, eps))))
-
-    auc = float(_trapz(f, x))
-    gaussian_entropy = float(0.5 * np.log(2 * np.pi * np.e * max(variance, eps)))
-    entropy_gap = gaussian_entropy - entropy
-
-    return {
-        "mean": mean, "std": std, "median": median, "mode": mode, "auc": auc,
-        "entropy": entropy, "entropy_gap": entropy_gap,
-        "x": x.tolist(), "f": f.tolist(),
-    }
+    return x, f
 
 def run_seed_cnn(dataset: str, cfg: ExperimentConfig, seed: int) -> dict[str, Any]:
     spec = DATASET_SPECS[dataset]
@@ -532,8 +500,10 @@ def run_seed_cnn(dataset: str, cfg: ExperimentConfig, seed: int) -> dict[str, An
     x = np.array([r["normalized_radius"] for r in rows])
     y = np.array([r["normalized_accuracy"] for r in rows])
     f_iso = fit_isotonic_cdf(y)
-    stats = cdf_statistics(x, f_iso)
-    return {"seed": seed, "baseline_accuracy": float(baseline_acc), "rows": rows, "stats": stats}
+    srf = renormalize_srf(f_iso)
+    x_curve, srf_curve = extend_to_unit_interval(x, srf)
+    return {"seed": seed, "baseline_accuracy": float(baseline_acc), "rows": rows,
+            "curve": {"x": x_curve.tolist(), "srf": srf_curve.tolist()}}
 
 def run_seed_resnet(dataset: str, cfg: ExperimentConfig, seed: int, backbone: nn.Module, device: torch.device) -> dict[str, Any]:
     spec = DATASET_SPECS[dataset]
@@ -561,21 +531,27 @@ def run_seed_resnet(dataset: str, cfg: ExperimentConfig, seed: int, backbone: nn
     x = np.array([r["normalized_radius"] for r in rows])
     y = np.array([r["normalized_accuracy"] for r in rows])
     f_iso = fit_isotonic_cdf(y)
-    stats = cdf_statistics(x, f_iso)
-    return {"seed": seed, "baseline_accuracy": float(baseline_acc), "rows": rows, "stats": stats}
+    srf = renormalize_srf(f_iso)
+    x_curve, srf_curve = extend_to_unit_interval(x, srf)
+    return {"seed": seed, "baseline_accuracy": float(baseline_acc), "rows": rows,
+            "curve": {"x": x_curve.tolist(), "srf": srf_curve.tolist()}}
+
+def renormalize_srf(y: np.ndarray) -> np.ndarray:
+    y = np.asarray(y, dtype=float)
+    y0 = y[0]
+    denom = max(1.0 - y0, 1e-12)
+    return np.clip((y - y0) / denom, 0.0, 1.0)
 
 def aggregate_architecture_results(dataset: str, architecture: str, seeds: list[int], per_seed: list[dict[str, Any]]) -> dict[str, Any]:
-    x_common = np.array(per_seed[0]["stats"]["x"])
-    f_matrix = np.array([s["stats"]["f"] for s in per_seed])
+    x_common = np.array(per_seed[0]["curve"]["x"])
+    f_matrix = np.array([s["curve"]["srf"] for s in per_seed])
     f_mean = f_matrix.mean(axis=0)
     f_std = f_matrix.std(axis=0)
 
-    agg_stats: dict[str, dict[str, float]] = {}
-    for key in ("mean", "std", "median", "mode", "auc", "entropy", "entropy_gap"):
-        values = [s["stats"][key] for s in per_seed]
-        agg_stats[key] = {"mean": float(np.mean(values)), "std": float(np.std(values)), "values": values}
     baseline_accs = [s["baseline_accuracy"] for s in per_seed]
-    agg_stats["baseline_accuracy"] = {"mean": float(np.mean(baseline_accs)), "std": float(np.std(baseline_accs)), "values": baseline_accs}
+    agg_stats: dict[str, dict[str, float]] = {
+        "baseline_accuracy": {"mean": float(np.mean(baseline_accs)), "std": float(np.std(baseline_accs)), "values": baseline_accs}
+    }
 
     return {
         "dataset": dataset, "display_name": DATASET_SPECS[dataset]["display_name"],
@@ -591,18 +567,17 @@ def save_stability_panel(ax, result: dict[str, Any]) -> None:
     f_std = np.array(result["f_std"])
 
     for idx, entry in enumerate(result["per_seed"]):
-        x = entry["stats"]["x"]
-        f = entry["stats"]["f"]
-        ax.plot(x, f, color="C0", alpha=0.25, linewidth=1.0,
+        x = entry["curve"]["x"]
+        f_srf = entry["curve"]["srf"]
+        ax.plot(x, f_srf, color="C0", alpha=0.25, linewidth=1.0,
                 label=f"curvas individuales ({len(result['seeds'])} semillas)" if idx == 0 else None)
 
     ax.fill_between(x_common, np.clip(f_mean - f_std, 0, 1), np.clip(f_mean + f_std, 0, 1),
                      color="C1", alpha=0.25, label="banda ± 1 desviación típica")
     ax.plot(x_common, f_mean, color="C1", linewidth=2.5, label="curva media")
 
-    ax.set_xlabel("Radio espectral normalizado (r = ρ/ρ_max)")
-    ax.set_ylabel("Precisión normalizada (F(r))")
-    ax.set_title(result["architecture_display"])
+    ax.set_xlabel(f"Radio espectral normalizado (r = ρ/ρ_max) — {result['architecture_display']}")
+    ax.set_ylabel("SRF(r)")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="lower right", fontsize=8)
 
@@ -610,7 +585,6 @@ def save_combined_plot(results: list[dict[str, Any]], dataset_display: str, outp
     fig, axes = plt.subplots(1, len(results), figsize=(6.5 * len(results), 5.5), squeeze=False)
     for ax, result in zip(axes[0], results):
         save_stability_panel(ax, result)
-    fig.suptitle(f"Estabilidad de la SRF frente a la semilla — {dataset_display}")
     fig.tight_layout()
     fig.savefig(output_path, dpi=160)
     plt.close(fig)
@@ -627,63 +601,35 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
         f"- Puntos por curva: `{cfg.n_points}`",
         "",
     ]
-    labels = {
-        "mean": "E[R]", "std": "σ[R]", "median": "Mediana", "mode": "Moda",
-        "auc": "AUC", "entropy": "H", "entropy_gap": "ΔH (negentropía)",
-    }
 
-    lines += ["## Comparación entre arquitecturas (media ± desviación típica entre semillas)", "",
-              "| Arquitectura | Accuracy base | E[R] | σ[R] | Mediana | Moda | AUC | H | ΔH |",
-              "|---|---|---|---|---|---|---|---|---|"]
+    lines += ["## Accuracy base por arquitectura (media ± desviación típica entre semillas)", "",
+              "| Arquitectura | Accuracy base |",
+              "|---|---|"]
     for result in results:
         agg = result["aggregate_stats"]
         lines.append(
             f"| {result['architecture_display']} "
-            f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp "
-            f"| {agg['mean']['mean']:.4f} ± {agg['mean']['std']:.4f} "
-            f"| {agg['std']['mean']:.4f} ± {agg['std']['std']:.4f} "
-            f"| {agg['median']['mean']:.4f} ± {agg['median']['std']:.4f} "
-            f"| {agg['mode']['mean']:.4f} ± {agg['mode']['std']:.4f} "
-            f"| {agg['auc']['mean']:.4f} ± {agg['auc']['std']:.4f} "
-            f"| {agg['entropy']['mean']:.4f} ± {agg['entropy']['std']:.4f} "
-            f"| {agg['entropy_gap']['mean']:.4f} ± {agg['entropy_gap']['std']:.4f} |"
+            f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp |"
         )
 
     for result in results:
-        agg = result["aggregate_stats"]
         lines += [
             "",
             f"## Detalle por semilla — {result['architecture_display']}",
             "",
-            "| Estadístico | Media | Desv. típica | Coef. de variación (|σ/media|) |",
-            "|---|---|---|---|",
-        ]
-        for key, label in labels.items():
-            m, s = agg[key]["mean"], agg[key]["std"]
-            cv = abs(s / m) if abs(m) > 1e-9 else float("nan")
-            lines.append(f"| {label} | {m:.4f} | {s:.4f} | {cv:.3f} |")
-        lines += [
-            "",
-            "| Semilla | Accuracy base | E[R] | σ[R] | Mediana | Moda | AUC | H | ΔH |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| Semilla | Accuracy base |",
+            "|---|---|",
         ]
         for entry in result["per_seed"]:
-            s = entry["stats"]
-            lines.append(
-                f"| {entry['seed']} | {entry['baseline_accuracy']*100:.2f}% "
-                f"| {s['mean']:.4f} | {s['std']:.4f} | {s['median']:.4f} | {s['mode']:.4f} "
-                f"| {s['auc']:.4f} | {s['entropy']:.4f} | {s['entropy_gap']:.4f} |"
-            )
+            lines.append(f"| {entry['seed']} | {entry['baseline_accuracy']*100:.2f}% |")
 
     lines += [
         "",
-        "Un coeficiente de variación bajo (desviación típica pequeña frente a la "
-        "media) en todos los estadísticos indica que la SRF es una característica "
-        "reproducible de la arquitectura entrenada bajo esta configuración fija, "
-        "y no un artefacto de una inicialización concreta. Comparando las dos "
-        "arquitecturas se puede además comprobar si esa reproducibilidad es "
-        "distinta entre una red entrenada desde cero y una red preentrenada con "
-        "el backbone congelado.",
+        "Los estadisticos de la SRF (E[R], sigma[R], mediana, moda, H) no se "
+        "calculan en este script: se recalculan a partir de \"rows\" (guardados "
+        "por semilla) en estadisticos_discretos.py / estadisticos_discretos_completos.py, "
+        "que es donde se comprueba la reproducibilidad frente a la semilla de cada "
+        "arquitectura.",
         "",
     ]
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
@@ -744,14 +690,7 @@ def main() -> None:
         agg = result["aggregate_stats"]
         print(
             f"{result['architecture_display']} ({dataset_display}, {len(cfg.seeds)} semillas): "
-            f"accuracy_base={agg['baseline_accuracy']['mean']*100:.2f}%±{agg['baseline_accuracy']['std']*100:.2f}pp "
-            f"E[R]={agg['mean']['mean']:.4f}±{agg['mean']['std']:.4f} "
-            f"σ[R]={agg['std']['mean']:.4f}±{agg['std']['std']:.4f} "
-            f"mediana={agg['median']['mean']:.4f}±{agg['median']['std']:.4f} "
-            f"moda={agg['mode']['mean']:.4f}±{agg['mode']['std']:.4f} "
-            f"AUC={agg['auc']['mean']:.4f}±{agg['auc']['std']:.4f} "
-            f"H={agg['entropy']['mean']:.4f}±{agg['entropy']['std']:.4f} "
-            f"ΔH={agg['entropy_gap']['mean']:.4f}±{agg['entropy_gap']['std']:.4f}"
+            f"accuracy_base={agg['baseline_accuracy']['mean']*100:.2f}%±{agg['baseline_accuracy']['std']*100:.2f}pp"
         )
     print(f"Saved outputs to: {output_dir.resolve()}")
 

@@ -18,8 +18,6 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-_trapz = getattr(np, "trapezoid", None) or np.trapz
-
 def load_mnist_raw():
     return keras.datasets.mnist.load_data()
 
@@ -368,45 +366,16 @@ def fit_isotonic_cdf(normalized_accuracy: np.ndarray) -> np.ndarray:
     y = np.clip(np.asarray(normalized_accuracy, dtype=float), 0.0, 1.0)
     return np.clip(pool_adjacent_violators(y), 0.0, 1.0)
 
-def cdf_statistics(normalized_radius: np.ndarray, cdf_values: np.ndarray) -> dict[str, Any]:
+def extend_to_unit_interval(normalized_radius: np.ndarray, curve_values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     x = np.asarray(normalized_radius, dtype=float)
-    f = np.asarray(cdf_values, dtype=float)
+    f = np.asarray(curve_values, dtype=float)
     if x[0] > 0.0:
         x = np.concatenate([[0.0], x])
         f = np.concatenate([[0.0], f])
     if x[-1] < 1.0:
         x = np.concatenate([x, [1.0]])
         f = np.concatenate([f, [1.0]])
-
-    survival = 1.0 - f
-    mean = float(_trapz(survival, x))
-    second_moment = float(2.0 * _trapz(x * survival, x))
-    variance = max(second_moment - mean ** 2, 0.0)
-    std = float(np.sqrt(variance))
-    median = float(np.interp(0.5, f, x))
-
-    widths_raw = np.diff(x)
-    nonzero = widths_raw > 1e-12
-    density_raw = np.zeros_like(widths_raw)
-    density_raw[nonzero] = np.diff(f)[nonzero] / widths_raw[nonzero]
-    mode_idx = int(np.argmax(density_raw))
-    mode = float(0.5 * (x[mode_idx] + x[mode_idx + 1]))
-
-    widths = widths_raw[nonzero]
-    density = density_raw[nonzero]
-    total_mass = float(np.sum(density * widths))
-    density_norm = density / total_mass if total_mass > 0 else density
-    eps = 1e-12
-    entropy = float(-np.sum(density_norm * widths * np.log(np.maximum(density_norm, eps))))
-
-    auc = float(_trapz(f, x))
-    gaussian_entropy = float(0.5 * np.log(2 * np.pi * np.e * max(variance, eps)))
-    entropy_gap = gaussian_entropy - entropy
-
-    return {
-        "mean": mean, "std": std, "median": median, "mode": mode, "auc": auc,
-        "entropy": entropy, "entropy_gap": entropy_gap, "x": x.tolist(), "f": f.tolist(),
-    }
+    return x, f
 
 def run_seed(dataset: str, cfg: ExperimentConfig, seed: int) -> dict[str, Any]:
     spec = DATASET_SPECS[dataset]
@@ -440,24 +409,29 @@ def run_seed(dataset: str, cfg: ExperimentConfig, seed: int) -> dict[str, Any]:
     x = np.array([r["normalized_radius"] for r in rows])
     y = np.array([r["normalized_accuracy"] for r in rows])
     f_iso = fit_isotonic_cdf(y)
-    stats = cdf_statistics(x, f_iso)
+    srf = renormalize_srf(f_iso)
+    x_curve, srf_curve = extend_to_unit_interval(x, srf)
     return {
         "seed": seed, "baseline_accuracy": float(baseline_acc),
-        "reconstruction_mse": reconstruction_mse, "rows": rows, "stats": stats,
+        "reconstruction_mse": reconstruction_mse, "rows": rows,
+        "curve": {"x": x_curve.tolist(), "srf": srf_curve.tolist()},
     }
+
+def renormalize_srf(y: np.ndarray) -> np.ndarray:
+    y = np.asarray(y, dtype=float)
+    y0 = y[0]
+    denom = max(1.0 - y0, 1e-12)
+    return np.clip((y - y0) / denom, 0.0, 1.0)
 
 def run_dataset(dataset: str, cfg: ExperimentConfig) -> dict[str, Any]:
     per_seed = [run_seed(dataset, cfg, seed) for seed in cfg.seeds]
 
-    x_common = np.array(per_seed[0]["stats"]["x"])
-    f_matrix = np.array([s["stats"]["f"] for s in per_seed])
+    x_common = np.array(per_seed[0]["curve"]["x"])
+    f_matrix = np.array([s["curve"]["srf"] for s in per_seed])
     f_mean = f_matrix.mean(axis=0)
     f_std = f_matrix.std(axis=0)
 
     agg_stats: dict[str, dict[str, float]] = {}
-    for key in ("mean", "std", "median", "mode", "auc", "entropy", "entropy_gap"):
-        values = [s["stats"][key] for s in per_seed]
-        agg_stats[key] = {"mean": float(np.mean(values)), "std": float(np.std(values)), "values": values}
     baseline_accs = [s["baseline_accuracy"] for s in per_seed]
     agg_stats["baseline_accuracy"] = {"mean": float(np.mean(baseline_accs)), "std": float(np.std(baseline_accs)), "values": baseline_accs}
     recon_mses = [s["reconstruction_mse"] for s in per_seed]
@@ -475,14 +449,13 @@ def save_ae_plot(result: dict[str, Any], output_path: Path) -> None:
     f_std = np.array(result["f_std"])
     plt.figure(figsize=(7, 5))
     for idx, entry in enumerate(result["per_seed"]):
-        plt.plot(entry["stats"]["x"], entry["stats"]["f"], color="C0", alpha=0.3, linewidth=1.0,
+        plt.plot(entry["curve"]["x"], entry["curve"]["srf"], color="C0", alpha=0.3, linewidth=1.0,
                   label=f"curvas individuales ({len(result['per_seed'])} semillas)" if idx == 0 else None)
     plt.fill_between(x_common, np.clip(f_mean - f_std, 0, 1), np.clip(f_mean + f_std, 0, 1),
                       color="C1", alpha=0.25, label="banda ± 1 desviación típica")
     plt.plot(x_common, f_mean, color="C1", linewidth=2.5, label="curva media")
-    plt.xlabel("Radio espectral normalizado (r = ρ/ρ_max)")
-    plt.ylabel("Precisión normalizada (F(r))")
-    plt.title(f"SRF exploratoria — Autoencoder (z∈R^{result['latent_dim']}) — {result['display_name']}")
+    plt.xlabel(f"Radio espectral normalizado (r = ρ/ρ_max) — Autoencoder (z∈R^{result['latent_dim']}), {result['display_name']}")
+    plt.ylabel("SRF(r)")
     plt.grid(True, alpha=0.3)
     plt.legend(loc="lower right", fontsize=8)
     plt.tight_layout()
@@ -505,24 +478,23 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
         f"- Puntos por curva: `{cfg.n_points}`",
         f"- Subconjunto de test para el barrido: `{cfg.eval_subset_size if cfg.eval_subset_size > 0 else 'completo'}`",
         "",
-        "| Dataset | Accuracy base | MSE reconstrucción | E[R] | σ[R] | Mediana | Moda | AUC | H | ΔH |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Dataset | Accuracy base | MSE reconstrucción |",
+        "|---|---|---|",
     ]
     for result in results:
         agg = result["aggregate_stats"]
         lines.append(
             f"| {result['display_name']} "
             f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp "
-            f"| {agg['reconstruction_mse']['mean']:.5f} ± {agg['reconstruction_mse']['std']:.5f} "
-            f"| {agg['mean']['mean']:.4f} ± {agg['mean']['std']:.4f} "
-            f"| {agg['std']['mean']:.4f} ± {agg['std']['std']:.4f} "
-            f"| {agg['median']['mean']:.4f} ± {agg['median']['std']:.4f} "
-            f"| {agg['mode']['mean']:.4f} ± {agg['mode']['std']:.4f} "
-            f"| {agg['auc']['mean']:.4f} ± {agg['auc']['std']:.4f} "
-            f"| {agg['entropy']['mean']:.4f} ± {agg['entropy']['std']:.4f} "
-            f"| {agg['entropy_gap']['mean']:.4f} ± {agg['entropy_gap']['std']:.4f} |"
+            f"| {agg['reconstruction_mse']['mean']:.5f} ± {agg['reconstruction_mse']['std']:.5f} |"
         )
-    lines.append("")
+    lines += [
+        "",
+        "Los estadisticos de la SRF (E[R], sigma[R], mediana, moda, H) no se "
+        "calculan en este script: se recalculan a partir de \"rows\" (guardados "
+        "por semilla) en estadisticos_discretos.py / estadisticos_discretos_completos.py.",
+        "",
+    ]
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 def main() -> None:
@@ -549,10 +521,7 @@ def main() -> None:
         agg = result["aggregate_stats"]
         print(
             f"{result['display_name']}: accuracy_base={agg['baseline_accuracy']['mean']*100:.2f}%±{agg['baseline_accuracy']['std']*100:.2f}pp "
-            f"MSE_recon={agg['reconstruction_mse']['mean']:.5f} "
-            f"E[R]={agg['mean']['mean']:.4f}±{agg['mean']['std']:.4f} "
-            f"AUC={agg['auc']['mean']:.4f}±{agg['auc']['std']:.4f} "
-            f"ΔH={agg['entropy_gap']['mean']:.4f}±{agg['entropy_gap']['std']:.4f}"
+            f"MSE_recon={agg['reconstruction_mse']['mean']:.5f}"
         )
     print(f"Resultados guardados en: {output_dir.resolve()}")
 

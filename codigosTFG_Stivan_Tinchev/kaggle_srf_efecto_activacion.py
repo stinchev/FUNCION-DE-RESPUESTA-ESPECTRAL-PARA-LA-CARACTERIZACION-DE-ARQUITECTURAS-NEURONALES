@@ -22,8 +22,6 @@ import torch.nn as nn
 import torch.nn.functional as Fnn
 import torchvision
 
-_trapz = getattr(np, "trapezoid", None) or np.trapz
-
 def load_mnist_raw():
     return keras.datasets.mnist.load_data()
 
@@ -488,46 +486,16 @@ def fit_isotonic_cdf(normalized_accuracy: np.ndarray) -> np.ndarray:
     y = np.clip(np.asarray(normalized_accuracy, dtype=float), 0.0, 1.0)
     return np.clip(pool_adjacent_violators(y), 0.0, 1.0)
 
-def cdf_statistics(normalized_radius: np.ndarray, cdf_values: np.ndarray) -> dict[str, Any]:
+def extend_to_unit_interval(normalized_radius: np.ndarray, curve_values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     x = np.asarray(normalized_radius, dtype=float)
-    f = np.asarray(cdf_values, dtype=float)
+    f = np.asarray(curve_values, dtype=float)
     if x[0] > 0.0:
         x = np.concatenate([[0.0], x])
         f = np.concatenate([[0.0], f])
     if x[-1] < 1.0:
         x = np.concatenate([x, [1.0]])
         f = np.concatenate([f, [1.0]])
-
-    survival = 1.0 - f
-    mean = float(_trapz(survival, x))
-    second_moment = float(2.0 * _trapz(x * survival, x))
-    variance = max(second_moment - mean ** 2, 0.0)
-    std = float(np.sqrt(variance))
-    median = float(np.interp(0.5, f, x))
-
-    widths_raw = np.diff(x)
-    nonzero = widths_raw > 1e-12
-    density_raw = np.zeros_like(widths_raw)
-    density_raw[nonzero] = np.diff(f)[nonzero] / widths_raw[nonzero]
-    mode_idx = int(np.argmax(density_raw))
-    mode = float(0.5 * (x[mode_idx] + x[mode_idx + 1]))
-
-    widths = widths_raw[nonzero]
-    density = density_raw[nonzero]
-    total_mass = float(np.sum(density * widths))
-    density_norm = density / total_mass if total_mass > 0 else density
-    eps = 1e-12
-    entropy = float(-np.sum(density_norm * widths * np.log(np.maximum(density_norm, eps))))
-
-    auc = float(_trapz(f, x))
-    gaussian_entropy = float(0.5 * np.log(2 * np.pi * np.e * max(variance, eps)))
-    entropy_gap = gaussian_entropy - entropy
-
-    return {
-        "mean": mean, "std": std, "median": median, "mode": mode, "auc": auc,
-        "entropy": entropy, "entropy_gap": entropy_gap,
-        "x": x.tolist(), "f": f.tolist(),
-    }
+    return x, f
 
 def run_seed_cnn(dataset: str, cfg: ExperimentConfig, activation: str, seed: int) -> dict[str, Any]:
     spec = DATASET_SPECS[dataset]
@@ -553,9 +521,11 @@ def run_seed_cnn(dataset: str, cfg: ExperimentConfig, activation: str, seed: int
     x = np.array([r["normalized_radius"] for r in rows])
     y = np.array([r["normalized_accuracy"] for r in rows])
     f_iso = fit_isotonic_cdf(y)
-    stats = cdf_statistics(x, f_iso)
+    srf = renormalize_srf(f_iso)
+    x_curve, srf_curve = extend_to_unit_interval(x, srf)
 
-    return {"activation": activation, "seed": seed, "baseline_accuracy": float(baseline_acc), "rows": rows, "stats": stats}
+    return {"activation": activation, "seed": seed, "baseline_accuracy": float(baseline_acc), "rows": rows,
+            "curve": {"x": x_curve.tolist(), "srf": srf_curve.tolist()}}
 
 def run_seed_resnet(dataset: str, cfg: ExperimentConfig, seed: int, backbone: nn.Module, device: torch.device) -> dict[str, Any]:
     spec = DATASET_SPECS[dataset]
@@ -583,21 +553,27 @@ def run_seed_resnet(dataset: str, cfg: ExperimentConfig, seed: int, backbone: nn
     x = np.array([r["normalized_radius"] for r in rows])
     y = np.array([r["normalized_accuracy"] for r in rows])
     f_iso = fit_isotonic_cdf(y)
-    stats = cdf_statistics(x, f_iso)
-    return {"activation": "resnet18_reference", "seed": seed, "baseline_accuracy": float(baseline_acc), "rows": rows, "stats": stats}
+    srf = renormalize_srf(f_iso)
+    x_curve, srf_curve = extend_to_unit_interval(x, srf)
+    return {"activation": "resnet18_reference", "seed": seed, "baseline_accuracy": float(baseline_acc), "rows": rows,
+            "curve": {"x": x_curve.tolist(), "srf": srf_curve.tolist()}}
+
+def renormalize_srf(y: np.ndarray) -> np.ndarray:
+    y = np.asarray(y, dtype=float)
+    y0 = y[0]
+    denom = max(1.0 - y0, 1e-12)
+    return np.clip((y - y0) / denom, 0.0, 1.0)
 
 def aggregate_variant_results(display_name: str, seeds: list[int], per_seed: list[dict[str, Any]], variant_key: str) -> dict[str, Any]:
-    x_common = np.array(per_seed[0]["stats"]["x"])
-    f_matrix = np.array([s["stats"]["f"] for s in per_seed])
+    x_common = np.array(per_seed[0]["curve"]["x"])
+    f_matrix = np.array([s["curve"]["srf"] for s in per_seed])
     f_mean = f_matrix.mean(axis=0)
     f_std = f_matrix.std(axis=0)
 
-    agg_stats: dict[str, dict[str, float]] = {}
-    for key in ("mean", "std", "median", "mode", "auc", "entropy", "entropy_gap"):
-        values = [s["stats"][key] for s in per_seed]
-        agg_stats[key] = {"mean": float(np.mean(values)), "std": float(np.std(values)), "values": values}
     baseline_accs = [s["baseline_accuracy"] for s in per_seed]
-    agg_stats["baseline_accuracy"] = {"mean": float(np.mean(baseline_accs)), "std": float(np.std(baseline_accs)), "values": baseline_accs}
+    agg_stats: dict[str, dict[str, float]] = {
+        "baseline_accuracy": {"mean": float(np.mean(baseline_accs)), "std": float(np.std(baseline_accs)), "values": baseline_accs}
+    }
 
     return {
         "variant": variant_key, "display_name": display_name,
@@ -617,9 +593,8 @@ def save_comparison_plot(results: list[dict[str, Any]], dataset_display: str, ou
         linestyle = "--" if is_reference else "-"
         plt.fill_between(x, np.clip(f_mean - f_std, 0, 1), np.clip(f_mean + f_std, 0, 1), color=color, alpha=0.12)
         plt.plot(x, f_mean, color=color, linewidth=2.4 if is_reference else 2.0, linestyle=linestyle, label=result["display_name"])
-    plt.xlabel("Radio espectral normalizado (r = ρ/ρ_max)")
-    plt.ylabel("Precisión normalizada media (F(r))")
-    plt.title(f"SRF de la CNN según la activación oculta, vs. ResNet-18 — {dataset_display}")
+    plt.xlabel(f"Radio espectral normalizado (r = ρ/ρ_max) — {dataset_display}")
+    plt.ylabel("SRF(r) media")
     plt.grid(True, alpha=0.3)
     plt.legend(loc="lower right")
     plt.tight_layout()
@@ -638,33 +613,26 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
         f"- Semillas: `{cfg.seeds}`",
         f"- Puntos por curva: `{cfg.n_points}`",
         "",
-        "## Estadísticos de la SRF por variante (media ± desviación típica entre semillas)",
+        "## Accuracy base por variante (media ± desviación típica entre semillas)",
         "",
-        "| Variante | Accuracy base | E[R] | σ[R] | Mediana | Moda | AUC | H | ΔH |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Variante | Accuracy base |",
+        "|---|---|",
     ]
     for result in results:
         agg = result["aggregate_stats"]
         lines.append(
             f"| {result['display_name']} "
-            f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp "
-            f"| {agg['mean']['mean']:.4f} ± {agg['mean']['std']:.4f} "
-            f"| {agg['std']['mean']:.4f} ± {agg['std']['std']:.4f} "
-            f"| {agg['median']['mean']:.4f} ± {agg['median']['std']:.4f} "
-            f"| {agg['mode']['mean']:.4f} ± {agg['mode']['std']:.4f} "
-            f"| {agg['auc']['mean']:.4f} ± {agg['auc']['std']:.4f} "
-            f"| {agg['entropy']['mean']:.4f} ± {agg['entropy']['std']:.4f} "
-            f"| {agg['entropy_gap']['mean']:.4f} ± {agg['entropy_gap']['std']:.4f} |"
+            f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp |"
         )
     lines += [
         "",
-        "Si la precisión base es similar entre las cuatro activaciones de la CNN "
-        "pero E[R]/ΔH difieren claramente, la forma de la SRF no está determinada "
-        "solo por el rendimiento final, sino también por la función de activación "
-        "empleada en las capas ocultas. La fila de ResNet-18 es una referencia "
-        "fija (backbone congelado, sin variar activación): sirve para ver si "
-        "alguna variante de la CNN se acerca más a su comportamiento espectral, "
-        "no para atribuir el efecto a su activación (que no se modifica).",
+        "Los estadisticos de la SRF (E[R], sigma[R], mediana, moda, H) no se "
+        "calculan en este script: se recalculan a partir de \"rows\" (guardados "
+        "por semilla y variante) en estadisticos_discretos.py / "
+        "estadisticos_discretos_completos.py, que es donde se compara si la "
+        "activación cambia la forma de la SRF aunque la precisión final apenas "
+        "cambie. La fila de ResNet-18 es una referencia fija (backbone "
+        "congelado, sin variar activación).",
         "",
     ]
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
@@ -706,12 +674,7 @@ def main() -> None:
     for result in results:
         agg = result["aggregate_stats"]
         print(
-            f"{result['display_name']}: accuracy_base={agg['baseline_accuracy']['mean']*100:.2f}%±{agg['baseline_accuracy']['std']*100:.2f}pp "
-            f"E[R]={agg['mean']['mean']:.4f}±{agg['mean']['std']:.4f} "
-            f"σ[R]={agg['std']['mean']:.4f}±{agg['std']['std']:.4f} "
-            f"AUC={agg['auc']['mean']:.4f}±{agg['auc']['std']:.4f} "
-            f"H={agg['entropy']['mean']:.4f}±{agg['entropy']['std']:.4f} "
-            f"ΔH={agg['entropy_gap']['mean']:.4f}±{agg['entropy_gap']['std']:.4f}"
+            f"{result['display_name']}: accuracy_base={agg['baseline_accuracy']['mean']*100:.2f}%±{agg['baseline_accuracy']['std']*100:.2f}pp"
         )
     print(f"Saved outputs to: {output_dir.resolve()}")
 

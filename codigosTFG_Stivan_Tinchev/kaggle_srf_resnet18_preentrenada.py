@@ -18,8 +18,6 @@ import torch.nn as nn
 import torch.nn.functional as Fnn
 import torchvision
 
-_trapz = getattr(np, "trapezoid", None) or np.trapz
-
 DATASET_SPECS = {
     "mnist": {"display_name": "MNIST", "image_shape": (28, 28), "torch_cls": torchvision.datasets.MNIST},
     "fashion_mnist": {"display_name": "Fashion-MNIST", "image_shape": (28, 28), "torch_cls": torchvision.datasets.FashionMNIST},
@@ -380,30 +378,10 @@ def fit_isotonic_cdf(normalized_accuracy: np.ndarray) -> np.ndarray:
     y = np.clip(np.asarray(normalized_accuracy, dtype=float), 0.0, 1.0)
     return np.clip(pool_adjacent_violators(y), 0.0, 1.0)
 
-def cdf_statistics(normalized_radius: np.ndarray, cdf_values: np.ndarray) -> dict[str, float]:
-    x = np.asarray(normalized_radius, dtype=float)
-    f = np.asarray(cdf_values, dtype=float)
-    if x[0] > 0.0:
-        x = np.concatenate([[0.0], x])
-        f = np.concatenate([[0.0], f])
-    if x[-1] < 1.0:
-        x = np.concatenate([x, [1.0]])
-        f = np.concatenate([f, [1.0]])
-    survival = 1.0 - f
-    mean = float(_trapz(survival, x))
-    second_moment = float(2.0 * _trapz(x * survival, x))
-    variance = max(second_moment - mean ** 2, 0.0)
-    std = float(np.sqrt(variance))
-    median = float(np.interp(0.5, f, x))
-    density = np.diff(f) / np.diff(x)
-    mode_idx = int(np.argmax(density))
-    mode = float(0.5 * (x[mode_idx] + x[mode_idx + 1]))
-    return {"mean": mean, "std": std, "median": median, "mode": mode}
-
 def run_dataset(dataset: str, cfg: ExperimentConfig, backbone: nn.Module, device: torch.device) -> dict[str, Any]:
     spec = DATASET_SPECS[dataset]
     height, width = spec["image_shape"]
-    per_seed_rows, per_seed_iso, per_seed_stats, baseline_accs = [], [], [], []
+    per_seed_rows, per_seed_iso, baseline_accs = [], [], []
 
     for seed in cfg.seeds:
         print(f"  [seed={seed}] extrayendo features congeladas y entrenando cabeza lineal...")
@@ -428,19 +406,15 @@ def run_dataset(dataset: str, cfg: ExperimentConfig, backbone: nn.Module, device
         x = np.array([r["normalized_radius"] for r in rows])
         y = np.array([r["normalized_accuracy"] for r in rows])
         f_iso = fit_isotonic_cdf(y)
-        stats = cdf_statistics(x, f_iso)
 
         per_seed_rows.append(rows)
         per_seed_iso.append(f_iso)
-        per_seed_stats.append(stats)
         baseline_accs.append(float(baseline_acc))
 
-    agg_stats: dict[str, dict[str, float]] = {}
-    for key in ("mean", "std", "median", "mode"):
-        values = [s[key] for s in per_seed_stats]
-        agg_stats[key] = {"mean": float(np.mean(values)), "std": float(np.std(values)), "values": values}
-    agg_stats["baseline_accuracy"] = {
-        "mean": float(np.mean(baseline_accs)), "std": float(np.std(baseline_accs)), "values": baseline_accs
+    agg_stats: dict[str, dict[str, float]] = {
+        "baseline_accuracy": {
+            "mean": float(np.mean(baseline_accs)), "std": float(np.std(baseline_accs)), "values": baseline_accs
+        }
     }
 
     return {
@@ -448,21 +422,26 @@ def run_dataset(dataset: str, cfg: ExperimentConfig, backbone: nn.Module, device
         "eval_subset_size": cfg.eval_subset_size,
         "per_seed_rows": per_seed_rows,
         "per_seed_isotonic_cdf": [f.tolist() for f in per_seed_iso],
-        "per_seed_stats": per_seed_stats,
         "aggregate_stats": agg_stats,
     }
+
+def renormalize_srf(y: np.ndarray) -> np.ndarray:
+    y = np.asarray(y, dtype=float)
+    y0 = y[0]
+    denom = max(1.0 - y0, 1e-12)
+    return np.clip((y - y0) / denom, 0.0, 1.0)
 
 def save_dataset_curve_plot(result: dict[str, Any], output_path: Path) -> None:
     plt.figure(figsize=(7, 5))
     for seed_idx, rows in enumerate(result["per_seed_rows"]):
         x = [r["normalized_radius"] for r in rows]
-        y_raw = [r["normalized_accuracy"] for r in rows]
-        y_iso = result["per_seed_isotonic_cdf"][seed_idx]
-        plt.scatter(x, y_raw, s=10, alpha=0.35, color=f"C{seed_idx}")
-        plt.plot(x, y_iso, color=f"C{seed_idx}", label=f"semilla {seed_idx}")
+        y_iso = np.array(result["per_seed_isotonic_cdf"][seed_idx])
+        y_srf = renormalize_srf(y_iso)
+        y_raw_srf = renormalize_srf(np.array([r["normalized_accuracy"] for r in rows]))
+        plt.scatter(x, y_raw_srf, s=10, alpha=0.35, color=f"C{seed_idx}")
+        plt.plot(x, y_srf, color=f"C{seed_idx}", label=f"semilla {seed_idx} — ResNet-18")
     plt.xlabel("Radio espectral normalizado (r = ρ/ρ_max)")
-    plt.ylabel("Precisión normalizada (F(r))")
-    plt.title(f"CDF espectral acumulativa — ResNet-18 congelada — {result['display_name']}")
+    plt.ylabel("SRF(r)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -474,11 +453,11 @@ def save_comparison_plot(results: list[dict[str, Any]], output_path: Path) -> No
     for idx, result in enumerate(results):
         rows0 = result["per_seed_rows"][0]
         x = [r["normalized_radius"] for r in rows0]
-        mean_iso = np.mean(np.array(result["per_seed_isotonic_cdf"]), axis=0)
-        plt.plot(x, mean_iso, label=result["display_name"], color=f"C{idx}")
-    plt.xlabel("Radio espectral normalizado (r = ρ/ρ_max)")
-    plt.ylabel("Precisión normalizada media (F(r))")
-    plt.title("Comparación de la CDF espectral entre datasets — ResNet-18 congelada")
+        srf_per_seed = np.array([renormalize_srf(np.array(c)) for c in result["per_seed_isotonic_cdf"]])
+        mean_srf = srf_per_seed.mean(axis=0)
+        plt.plot(x, mean_srf, label=result["display_name"], color=f"C{idx}")
+    plt.xlabel("Radio espectral normalizado (r = ρ/ρ_max) — ResNet-18 congelada")
+    plt.ylabel("SRF(r) media")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -494,28 +473,24 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
         f"- Puntos por curva: `{cfg.n_points}`",
         f"- Tamaño del subconjunto de test usado en el barrido: `{cfg.eval_subset_size if cfg.eval_subset_size > 0 else 'completo'}`",
         "",
-        "## Estadísticos de la distribución implícita (radio espectral normalizado, media ± desv. típica entre semillas)",
+        "## Accuracy base (test completo, media ± desv. típica entre semillas)",
         "",
-        "| Dataset | Accuracy base (test completo) | E[r] (media) | Desv. típica | Mediana | Moda |",
-        "|---|---|---|---|---|---|",
+        "| Dataset | Accuracy base (test completo) |",
+        "|---|---|",
     ]
     for result in results:
         agg = result["aggregate_stats"]
         lines.append(
             f"| {result['display_name']} "
-            f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp "
-            f"| {agg['mean']['mean']:.4f} ± {agg['mean']['std']:.4f} "
-            f"| {agg['std']['mean']:.4f} ± {agg['std']['std']:.4f} "
-            f"| {agg['median']['mean']:.4f} ± {agg['median']['std']:.4f} "
-            f"| {agg['mode']['mean']:.4f} ± {agg['mode']['std']:.4f} |"
+            f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp |"
         )
     lines += [
         "",
-        "`E[r]`, `Desv. típica`, `Mediana` y `Moda` son estadísticos de la variable "
-        "\"radio espectral normalizado necesario para clasificar bien\" (r ∈ [0,1]), "
-        "calculados a partir de la CDF empírica (precisión normalizada vs. radio "
-        "normalizado) tras ajustarla a monótona mediante regresión isotónica. Backbone "
-        "ResNet-18 preentrenado en ImageNet y congelado; solo se entrena la cabeza lineal.",
+        "Los estadisticos de la SRF (E[R], sigma[R], mediana, moda, H) no se "
+        "calculan en este script: se recalculan a partir de \"per_seed_rows\" "
+        "en estadisticos_discretos.py / estadisticos_discretos_completos.py. "
+        "Backbone ResNet-18 preentrenado en ImageNet y congelado; solo se "
+        "entrena la cabeza lineal.",
         "",
     ]
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
@@ -563,11 +538,7 @@ def main() -> None:
     for result in results:
         agg = result["aggregate_stats"]
         print(
-            f"{result['display_name']}: accuracy_base={agg['baseline_accuracy']['mean']*100:.2f}%±{agg['baseline_accuracy']['std']*100:.2f}pp "
-            f"E[r]={agg['mean']['mean']:.4f}±{agg['mean']['std']:.4f} "
-            f"std[r]={agg['std']['mean']:.4f}±{agg['std']['std']:.4f} "
-            f"mediana={agg['median']['mean']:.4f}±{agg['median']['std']:.4f} "
-            f"moda={agg['mode']['mean']:.4f}±{agg['mode']['std']:.4f}"
+            f"{result['display_name']}: accuracy_base={agg['baseline_accuracy']['mean']*100:.2f}%±{agg['baseline_accuracy']['std']*100:.2f}pp"
         )
     print(f"Saved outputs to: {output_dir.resolve()}")
 
