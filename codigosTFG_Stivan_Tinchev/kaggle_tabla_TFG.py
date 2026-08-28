@@ -3,8 +3,6 @@ from pathlib import Path
 
 import numpy as np
 
-_trapz = getattr(np, "trapezoid", None) or np.trapz
-
 
 def pool_adjacent_violators(y: np.ndarray) -> np.ndarray:
     values, weights = [], []
@@ -91,12 +89,12 @@ def stats_from_per_seed(per_seed: list[dict]) -> dict[str, tuple[float, float]]:
 
 def fmt(agg: dict[str, tuple[float, float]], key: str, decimals: int = 4) -> str:
     m, s = agg[key]
-    return f"{m:.{decimals}f}\u00b1{s:.{decimals}f}"
+    return f"{m:.{decimals}f}±{s:.{decimals}f}"
 
 
 def fmt_pct(agg: dict[str, tuple[float, float]], key: str = "baseline_accuracy", decimals: int = 2) -> str:
     m, s = agg[key]
-    return f"{100*m:.{decimals}f}%\u00b1{100*s:.{decimals}f}pp"
+    return f"{100*m:.{decimals}f}%±{100*s:.{decimals}f}pp"
 
 
 COLUMN_HEADER = f"{'Precision base':<18}{'E[R]':<16}{'sigma[R]':<16}{'Mediana':<16}{'Moda':<16}{'H':<16}"
@@ -106,15 +104,6 @@ def fmt_row(agg: dict[str, tuple[float, float]]) -> str:
     return (f"{fmt_pct(agg):<18}{fmt(agg,'mean'):<16}{fmt(agg,'std'):<16}{fmt(agg,'median'):<16}"
             f"{fmt(agg,'mode'):<16}{fmt(agg,'H'):<16}")
 
-
-LOCAL_PATHS = {
-    "cnn_srf": Path(r"C:\Users\stst1\Downloads\outputs_TFG\outputs_srf_cnn_pequena\20260728_171111"),
-    "resnet_srf": Path(r"C:\Users\stst1\Downloads\outputs_TFG\outputs_srf_resnet18_preentrenada\20260728_171133"),
-    "stability": Path(r"C:\Users\stst1\Downloads\outputs_TFG\outputs_srf_estabilidad_semillas\20260728_140957"),
-    "activation": Path(r"C:\Users\stst1\Downloads\outputs_TFG\outputs_srf_efecto_activacion\20260728_140848"),
-    "autoencoder": Path(r"C:\Users\stst1\Downloads\outputs_TFG\outputs_srf_autoencoder\20260728_140809"),
-    "vit": Path(r"C:\Users\stst1\Downloads\outputs_TFG\outputs_srf_vit\20260728_170918"),
-}
 
 FOLDER_NAMES = {
     "cnn_srf": ["spectral_cdf_outputs_en", "spectral_cdf_outputs"],
@@ -141,11 +130,15 @@ def find_output_dir(roots: list[Path], folder_names: list[str]) -> Path | None:
 
 def resolve_paths() -> dict[str, Path]:
     kaggle_roots = [Path("/kaggle/working"), Path("/kaggle/input")]
-    on_kaggle = any(root.exists() for root in kaggle_roots)
     resolved = {}
     for key, folder_names in FOLDER_NAMES.items():
-        found = find_output_dir(kaggle_roots, folder_names) if on_kaggle else None
-        resolved[key] = found if found is not None else LOCAL_PATHS[key]
+        found = find_output_dir(kaggle_roots, folder_names)
+        if found is None:
+            raise FileNotFoundError(
+                f"No se encontro la carpeta de salida de '{key}' bajo /kaggle/working ni "
+                f"/kaggle/input. Ejecuta antes el notebook del experimento correspondiente."
+            )
+        resolved[key] = found
     return resolved
 
 
@@ -163,9 +156,7 @@ for _name, _path in _PATHS.items():
 
 
 def default_output_dir() -> Path:
-    if Path("/kaggle/working").exists():
-        return Path("/kaggle/working/estadisticos_discretos_srf")
-    return Path(r"C:\Users\stst1\Downloads\estadisticos_discretos_srf")
+    return Path("/kaggle/working/estadisticos_discretos_srf")
 
 
 OUTPUT_DIR = default_output_dir()
