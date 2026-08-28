@@ -1,53 +1,3 @@
-"""
-Descongelado progresivo del backbone + SRF en cada etapa, para ResNet-18
-preentrenada en ImageNet (cabeza reentrenada con MNIST).
-
-Idea del experimento: en vez de comparar solo dos puntos extremos --
-"backbone 100% congelado, solo cabeza" (lo que ya hacía
-kaggle_vision_resnet18_spectral_cdf_experiment.py) frente a "red 100%
-reentrenada" -- se entrena una SECUENCIA de modelos en los que se va
-descongelando el backbone poco a poco (de la salida hacia la entrada, que es
-el orden habitual en fine-tuning: las capas finales son más específicas de
-ImageNet, las iniciales son filtros más genéricos) y se calcula la SRF
-completa en cada paso. Así se puede ver cómo cambia el "fingerprint"
-espectral de la red a medida que MNIST va desplazando a ImageNet dentro de
-los propios pesos del backbone, no solo en la cabeza.
-
-Granularidad del descongelado (de la salida hacia la entrada): ResNet-18
-tiene 8 bloques residuales (layer1..layer4, 2 bloques cada uno) + stem
-(conv1+bn1) = 9 unidades descongelables -> 10 "stages" (0..9).
-
-Metodologia igual que el resto del TFG salvo en dos puntos, justificados por
-presupuesto de computo (10 entrenamientos COMPLETOS, cada uno con su propio
-barrido SRF de ~150 puntos; con backbone descongelado ya no se pueden
-cachear features, así que cada epoca implica un forward+backward completo a
-224x224):
-  1. Una unica semilla por defecto (--seeds 42). Facil de repetir con mas
-     semillas despues si se quiere robustez (--seeds 42 43 44), igual que
-     se hizo opcionalmente en otros experimentos exploratorios del TFG
-     (Capitulo 5).
-  2. Subconjuntos de entrenamiento/validacion mas pequeños que en el resto
-     del TFG (--train-per-class 1000 --val-per-class 200 por defecto, en
-     vez de usar los 60000 de MNIST completos). La precision base
-     (baseline_accuracy) y el barrido SRF siguen evaluandose sobre el test
-     (baseline: completo; barrido: --eval-subset-size, por defecto 1000).
-
-Para las capas del backbone que SIGUEN congeladas, su BatchNorm se mantiene
-siempre en modo eval() (usa las estadisticas de ImageNet ya aprendidas),
-aunque el resto del modelo este en modo entrenamiento -- si no se hace esto,
-poner todo el modelo en train() recalcularia las estadisticas de
-normalizacion de golpe incluso en las capas que se supone que no se estan
-tocando, lo que estropearia esa parte del backbone sin que ningun gradiente
-la este entrenando realmente.
-
-Estadisticos de la SRF (E[R], sigma[R], mediana, moda, entropia H) con
-formula de sumatorio discreto sobre las masas p_i = SRF_i - SRF_{i-1}, no
-con integrales/trapecio (no hace falta). Sin AUC (es 1-E[R], no aporta
-informacion nueva).
-
-Requiere GPU para ser viable en un tiempo razonable (igual que el resto de
-scripts en PyTorch de este TFG).
-"""
 from __future__ import annotations
 
 import argparse
@@ -69,12 +19,6 @@ import torch.nn as nn
 import torch.nn.functional as Fnn
 import torchvision
 
-
-# ---------------------------------------------------------------------------
-# Datasets (idéntico al resto del TFG; por defecto solo MNIST, que es lo
-# pedido, pero se puede ampliar con --datasets)
-# ---------------------------------------------------------------------------
-
 DATASET_SPECS = {
     "mnist": {"display_name": "MNIST", "image_shape": (28, 28), "torch_cls": torchvision.datasets.MNIST},
     "fashion_mnist": {"display_name": "Fashion-MNIST", "image_shape": (28, 28), "torch_cls": torchvision.datasets.FashionMNIST},
@@ -84,7 +28,6 @@ DATASET_SPECS = {
 
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-
 
 def _robust_torchvision_cifar10_download(data_root, max_retries=10):
     import hashlib
@@ -128,7 +71,6 @@ def _robust_torchvision_cifar10_download(data_root, max_retries=10):
             time.sleep(5)
     raise RuntimeError(f"Could not download a valid CIFAR-10 archive after {max_retries} attempts.")
 
-
 def load_dataset_raw(dataset: str, data_root: str) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]:
     spec = DATASET_SPECS[dataset]
     cls = spec["torch_cls"]
@@ -153,11 +95,6 @@ def load_dataset_raw(dataset: str, data_root: str) -> tuple[tuple[np.ndarray, np
         y_test = test_ds.targets.numpy().astype(np.int64)
     return (x_train, y_train), (x_test, y_test)
 
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
 @dataclass
 class ExperimentConfig:
     datasets: list[str] = field(default_factory=lambda: ["mnist"])
@@ -175,7 +112,6 @@ class ExperimentConfig:
     output_root: str = ""
     data_root: str = ""
     quick: bool = False
-
 
 def parse_args(argv: list[str] | None = None) -> ExperimentConfig:
     parser = argparse.ArgumentParser(description="Descongelado progresivo del backbone + SRF, ResNet-18.")
@@ -215,35 +151,26 @@ def parse_args(argv: list[str] | None = None) -> ExperimentConfig:
         cfg.epochs = 2
     return cfg
 
-
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-
 
 def default_output_root() -> str:
     if os.path.exists("/kaggle/working"):
         return "/kaggle/working/progressive_unfreezing_resnet18_outputs"
     return "progressive_unfreezing_resnet18_experiment/outputs"
 
-
 def default_data_root() -> str:
     if os.path.exists("/kaggle/working"):
         return "/kaggle/working/torch_data"
     return "progressive_unfreezing_experiment/torch_data"
-
 
 def make_output_dir(root: str) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(root or default_output_root()) / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
-
-
-# ---------------------------------------------------------------------------
-# Split train/val/test estratificado (idéntico al resto del TFG)
-# ---------------------------------------------------------------------------
 
 def select_multiclass_subset(x: np.ndarray, y: np.ndarray, limit_per_class: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
@@ -259,7 +186,6 @@ def select_multiclass_subset(x: np.ndarray, y: np.ndarray, limit_per_class: int,
     y_out = np.concatenate(ys, axis=0)
     perm = rng.permutation(len(x_out))
     return x_out[perm], y_out[perm]
-
 
 def load_dataset_three_way(dataset: str, cfg: ExperimentConfig, seed: int) -> dict[str, np.ndarray]:
     data_root = cfg.data_root or default_data_root()
@@ -294,21 +220,12 @@ def load_dataset_three_way(dataset: str, cfg: ExperimentConfig, seed: int) -> di
         "n_train": len(x_train), "n_val": len(x_val), "n_test": len(x_test),
     }
 
-
 def subsample_for_sweep(x: np.ndarray, y: np.ndarray, subset_size: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
     if subset_size is None or subset_size <= 0 or subset_size >= len(x):
         return x, y
     rng = np.random.default_rng(seed + 2000)
     idx = rng.choice(len(x), size=subset_size, replace=False)
     return x[idx], y[idx]
-
-
-# ---------------------------------------------------------------------------
-# Backbone ResNet-18 preentrenado + plan de descongelado progresivo. El
-# "block_map" es un OrderedDict que va de la SALIDA del backbone hacia la
-# ENTRADA: la entrada i-ésima es la i-ésima unidad que se descongela al
-# pasar de stage (i-1) a stage i.
-# ---------------------------------------------------------------------------
 
 class LinearHead(nn.Module):
     def __init__(self, in_features: int, n_classes: int = 10):
@@ -318,13 +235,12 @@ class LinearHead(nn.Module):
     def forward(self, x):
         return self.fc(x)
 
-
 def build_backbone_and_plan(device: torch.device) -> tuple[nn.Module, int, "OrderedDict[str, list[nn.Module]]"]:
     try:
         backbone = torchvision.models.resnet18(weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
     except AttributeError:
         backbone = torchvision.models.resnet18(pretrained=True)
-    feature_dim = backbone.fc.in_features  # 512
+    feature_dim = backbone.fc.in_features
     backbone.fc = nn.Identity()
     block_map: "OrderedDict[str, list[nn.Module]]" = OrderedDict([
         ("layer4.1", [backbone.layer4[1]]),
@@ -344,12 +260,7 @@ def build_backbone_and_plan(device: torch.device) -> tuple[nn.Module, int, "Orde
     backbone.to(device)
     return backbone, feature_dim, block_map
 
-
 def apply_stage(backbone: nn.Module, block_map: "OrderedDict[str, list[nn.Module]]", stage_idx: int) -> list[str]:
-    """Congela TODO el backbone y descongela las `stage_idx` primeras
-    unidades de block_map (en su orden, de la salida hacia la entrada).
-    stage_idx=0 -> backbone totalmente congelado (solo cabeza).
-    stage_idx=len(block_map) -> backbone totalmente descongelado."""
     for p in backbone.parameters():
         p.requires_grad_(False)
     unfrozen_names = list(block_map.keys())[:stage_idx]
@@ -359,26 +270,15 @@ def apply_stage(backbone: nn.Module, block_map: "OrderedDict[str, list[nn.Module
                 p.requires_grad_(True)
     return unfrozen_names
 
-
 def set_backbone_train_mode(backbone: nn.Module, block_map: "OrderedDict[str, list[nn.Module]]", unfrozen_names: list[str]) -> None:
-    """Las unidades todavia congeladas se dejan siempre en eval() (para no
-    tocar sus estadisticas de BatchNorm de ImageNet); solo las unidades
-    actualmente descongeladas se ponen en train()."""
     backbone.eval()
     for name in unfrozen_names:
         for module in block_map[name]:
             module.train()
 
-
 def fraction_unfrozen(backbone: nn.Module, total_backbone_params: int) -> float:
     trainable = sum(p.numel() for p in backbone.parameters() if p.requires_grad)
     return trainable / total_backbone_params if total_backbone_params > 0 else 0.0
-
-
-# ---------------------------------------------------------------------------
-# Preprocesado, entrenamiento extremo-a-extremo (sin cachear features, ya
-# que el backbone puede cambiar de una epoca a otra) y evaluacion
-# ---------------------------------------------------------------------------
 
 def preprocess_for_backbone(images_hw: np.ndarray, device: torch.device) -> torch.Tensor:
     x = torch.from_numpy(np.ascontiguousarray(images_hw)).unsqueeze(1).to(device).float()
@@ -386,7 +286,6 @@ def preprocess_for_backbone(images_hw: np.ndarray, device: torch.device) -> torc
     x = x.repeat(1, 3, 1, 1)
     x = (x - IMAGENET_MEAN.to(device)) / IMAGENET_STD.to(device)
     return x
-
 
 @torch.no_grad()
 def evaluate_full_pipeline(backbone: nn.Module, head: nn.Module, images_hw: np.ndarray, y: np.ndarray,
@@ -401,7 +300,6 @@ def evaluate_full_pipeline(backbone: nn.Module, head: nn.Module, images_hw: np.n
         preds = logits.argmax(dim=1).cpu().numpy()
         correct += int((preds == y[start:start + batch_size]).sum())
     return correct / len(images_hw)
-
 
 def train_full_pipeline(backbone: nn.Module, head: nn.Module, block_map: "OrderedDict[str, list[nn.Module]]",
                          unfrozen_names: list[str], x_train_img: np.ndarray, y_train: np.ndarray,
@@ -445,27 +343,15 @@ def train_full_pipeline(backbone: nn.Module, head: nn.Module, block_map: "Ordere
         head.load_state_dict(best_head_state)
     return best_val_acc
 
-
-# ---------------------------------------------------------------------------
-# Barrido espectral acumulativo (idéntica mecánica FFT que en el resto del
-# TFG) y estadísticos discretos de la SRF (E[R], sigma[R], mediana, moda,
-# entropía de Shannon discreta -- NO diferencial). Sin AUC (es 1-E[R], no
-# aporta informacion nueva) y con formula de sumatorio, no integral/trapecio
-# (no hace falta: E[R]/sigma[R]/mediana/moda ya se calculan directamente
-# sobre las masas discretas p_i = SRF_i - SRF_{i-1}).
-# ---------------------------------------------------------------------------
-
 def radial_frequency_grid_centered(height: int, width: int) -> np.ndarray:
     yy, xx = np.indices((height, width))
     cy, cx = height // 2, width // 2
     return np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
 
-
 def build_keep_count_schedule(total_modes: int, n_points: int) -> np.ndarray:
     raw = np.linspace(1, total_modes, min(n_points, total_modes))
     counts = np.unique(np.round(raw).astype(int))
     return np.clip(counts, 1, total_modes)
-
 
 def reconstruct_with_keep_count(images: np.ndarray, order: np.ndarray, height: int, width: int, n_keep: int) -> np.ndarray:
     keep_flat = np.zeros(height * width, dtype=bool)
@@ -474,7 +360,6 @@ def reconstruct_with_keep_count(images: np.ndarray, order: np.ndarray, height: i
     shifted = np.fft.fftshift(np.fft.fft2(images, axes=(-2, -1)), axes=(-2, -1))
     restored = np.fft.ifft2(np.fft.ifftshift(shifted * keep_mask[np.newaxis], axes=(-2, -1)), axes=(-2, -1)).real
     return np.clip(restored, 0.0, 1.0)
-
 
 def sweep_cumulative_lowpass(backbone: nn.Module, head: nn.Module, x_test_img: np.ndarray, y_test: np.ndarray,
                               height: int, width: int, n_points: int, batch_size: int,
@@ -497,7 +382,6 @@ def sweep_cumulative_lowpass(backbone: nn.Module, head: nn.Module, x_test_img: n
         })
     return rows
 
-
 def pool_adjacent_violators(y: np.ndarray) -> np.ndarray:
     values, weights = [], []
     for yi in y:
@@ -516,10 +400,7 @@ def pool_adjacent_violators(y: np.ndarray) -> np.ndarray:
         pos += n
     return fitted
 
-
 def srf_from_rows(rows: list[dict]) -> tuple[np.ndarray, np.ndarray]:
-    """SRF(r) = (F(r)-F(0))/(1-F(0)), con regresion isotonica y anclada
-    exactamente en SRF(0)=0, SRF(1)=1."""
     x = np.array([r["normalized_radius"] for r in rows], dtype=float)
     acc = np.array([r["accuracy"] for r in rows], dtype=float)
     acc_min, acc_max = acc[0], acc[-1]
@@ -533,13 +414,7 @@ def srf_from_rows(rows: list[dict]) -> tuple[np.ndarray, np.ndarray]:
         srf = np.concatenate([srf, [1.0]])
     return x, srf
 
-
 def discrete_stats_with_entropy(x: np.ndarray, srf: np.ndarray) -> dict[str, float]:
-    """E[R] = sum_i r_i p_i, sigma[R] = sqrt(sum_i (r_i-E[R])^2 p_i), con r_i
-    el extremo derecho de cada intervalo y p_i = SRF_i - SRF_{i-1} (Anexo B
-    del TFG). Mediana: menor r_i con SRF_i >= 1/2. Moda: r_i con la masa
-    bruta p_i mas grande. H: entropia discreta de Shannon sobre las mismas
-    masas -- NO la entropia diferencial."""
     p = np.diff(srf)
     r_i = x[1:]
 
@@ -557,11 +432,6 @@ def discrete_stats_with_entropy(x: np.ndarray, srf: np.ndarray) -> dict[str, flo
     H = float(-np.sum(p * log_p))
 
     return {"mean": mean, "std": std, "median": median, "mode": mode, "H": H}
-
-
-# ---------------------------------------------------------------------------
-# Ejecución de una etapa (stage) y de todas las etapas de un dataset
-# ---------------------------------------------------------------------------
 
 def run_stage(stage_idx: int, unfrozen_names: list[str], dataset: str, cfg: ExperimentConfig,
               device: torch.device) -> dict[str, Any]:
@@ -601,8 +471,6 @@ def run_stage(stage_idx: int, unfrozen_names: list[str], dataset: str, cfg: Expe
         "media": float(np.mean(baseline_accs)), "std": float(np.std(baseline_accs)), "valores": baseline_accs
     }
 
-    # curva SRF media (semilla a semilla, sobre la primera semilla si hay
-    # varias -- para 1 semilla, que es lo habitual aqui, es directamente esa)
     x0, srf0 = srf_from_rows(per_seed_rows[0])
     all_srf = [srf_from_rows(rows)[1] for rows in per_seed_rows]
     mean_srf = np.mean(np.stack(all_srf, axis=0), axis=0)
@@ -614,7 +482,6 @@ def run_stage(stage_idx: int, unfrozen_names: list[str], dataset: str, cfg: Expe
         "per_seed_rows": per_seed_rows,
     }
 
-
 def run_experiment(dataset: str, cfg: ExperimentConfig, device: torch.device) -> list[dict[str, Any]]:
     _, _, block_map_template = build_backbone_and_plan(device)
     n_units = len(block_map_template)
@@ -622,9 +489,6 @@ def run_experiment(dataset: str, cfg: ExperimentConfig, device: torch.device) ->
 
     results = []
     for stage_idx in range(0, n_units + 1):
-        # se reconstruye el backbone en cada stage (dentro de run_stage, una
-        # vez por semilla) para partir siempre de los MISMOS pesos de
-        # ImageNet, no de los ya reentrenados en el stage anterior.
         backbone_probe, _, block_map_probe = build_backbone_and_plan(device)
         total_backbone_params = sum(p.numel() for p in backbone_probe.parameters())
         unfrozen_names = apply_stage(backbone_probe, block_map_probe, stage_idx)
@@ -637,11 +501,6 @@ def run_experiment(dataset: str, cfg: ExperimentConfig, device: torch.device) ->
         result["fraccion_backbone_descongelado"] = frac
         results.append(result)
     return results
-
-
-# ---------------------------------------------------------------------------
-# Tabla de SRS, tabla larga de SRF, y figura comparativa
-# ---------------------------------------------------------------------------
 
 def build_srs_table(dataset: str, results: list[dict[str, Any]]) -> str:
     lines = [
@@ -664,18 +523,13 @@ def build_srs_table(dataset: str, results: list[dict[str, Any]]) -> str:
         )
     return "\n".join(lines)
 
-
 def build_srf_long_table(results: list[dict[str, Any]]) -> list[dict[str, float]]:
-    """'Tabla con todas las SRF': formato largo (stage, r, SRF(r)) que junta
-    las curvas de todas las etapas en una sola tabla, facil de volcar a CSV
-    o de volver a graficar."""
     rows = []
     for r in results:
         for x_val, srf_val in zip(r["mean_normalized_radius"], r["mean_srf"]):
             rows.append({"stage": r["stage"], "fraccion_backbone_descongelado": r["fraccion_backbone_descongelado"],
                          "normalized_radius": x_val, "srf": srf_val})
     return rows
-
 
 def save_srf_long_csv(rows: list[dict[str, float]], path: Path) -> None:
     import csv
@@ -684,14 +538,7 @@ def save_srf_long_csv(rows: list[dict[str, float]], path: Path) -> None:
         writer.writeheader()
         writer.writerows(rows)
 
-
 def save_comparison_plot(dataset: str, results: list[dict[str, Any]], output_path: Path) -> None:
-    """Mismo estilo que save_comparison_plot en
-    kaggle_vision_resnet18_spectral_cdf_experiment.py (figsize (7,5), ciclo
-    de color por defecto de matplotlib C0..C9, leyenda simple, sin barra de
-    color): el ciclo por defecto tiene exactamente 10 colores, uno por cada
-    stage posible en este experimento, asi que cada etapa tiene un color fijo
-    y distinguible sin necesidad de nada mas elaborado."""
     plt.figure(figsize=(7, 5))
     for i, r in enumerate(results):
         plt.plot(r["mean_normalized_radius"], r["mean_srf"], color=f"C{i}", label=f"stage {r['stage']}")
@@ -703,11 +550,6 @@ def save_comparison_plot(dataset: str, results: list[dict[str, Any]], output_pat
     plt.tight_layout()
     plt.savefig(output_path, dpi=160)
     plt.close()
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     cfg = parse_args()
@@ -746,11 +588,6 @@ def main() -> None:
         save_comparison_plot(dataset, results, output_dir / f"{dataset}_srf_por_etapa.png")
 
     print(f"\nGuardado en: {output_dir.resolve()}")
-    print("  - <dataset>_all_stages_metrics.json  (todo en crudo: curvas por semilla, estadisticos)")
-    print("  - <dataset>_srs_table.md             (tabla de SRS por etapa, para pegar directamente)")
-    print("  - <dataset>_srf_all_stages_long.csv  (tabla larga con TODAS las curvas SRF, una fila por punto)")
-    print("  - <dataset>_srf_por_etapa.png        (figura comparativa de las SRF de todas las etapas)")
-
 
 if __name__ == "__main__":
     main()
