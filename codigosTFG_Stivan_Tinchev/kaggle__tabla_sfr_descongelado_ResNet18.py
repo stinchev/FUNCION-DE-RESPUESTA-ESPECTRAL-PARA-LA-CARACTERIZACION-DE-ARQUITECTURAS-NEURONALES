@@ -76,7 +76,10 @@ def find_metrics_path() -> Path:
             matches = list(root.rglob("mnist_all_stages_metrics.json"))
             if matches:
                 return sorted(matches, key=lambda p: p.stat().st_mtime)[-1]
-    return Path(r"C:\Users\stst1\Downloads\results (56)\progressive_unfreezing_resnet18_outputs\20260818_224154\mnist_all_stages_metrics.json")
+    raise FileNotFoundError(
+        "No se encontro mnist_all_stages_metrics.json bajo /kaggle/working ni "
+        "/kaggle/input. Ejecuta antes el notebook de entrenamiento con descongelado progresivo."
+    )
 
 
 METRICS_PATH = find_metrics_path()
@@ -137,7 +140,7 @@ def tabla_descongelado_progresivo() -> list[dict]:
         "|---|---|---|---|---|---|---|---|---|",
     ] + md_rows
 
-    output_dir = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path(r"C:\Users\stst1\Downloads")
+    output_dir = Path("/kaggle/working")
     (output_dir / f"{dataset}_srs_table_sumatorio.md").write_text("\n".join(md), encoding="utf-8")
     with (output_dir / f"{dataset}_srs_table_sumatorio.json").open("w", encoding="utf-8") as fh:
         json.dump(rows_out, fh, indent=2, ensure_ascii=False)
