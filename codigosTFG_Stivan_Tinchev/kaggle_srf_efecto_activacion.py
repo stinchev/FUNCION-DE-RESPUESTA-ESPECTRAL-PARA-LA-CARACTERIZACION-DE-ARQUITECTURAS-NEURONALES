@@ -390,16 +390,11 @@ def resolve_torch_device() -> torch.device:
     if device.type == "cuda":
         try:
             _ = torch.zeros(1, device=device) + 1.0
-        except RuntimeError as exc:
-            print(f"AVISO: se detectó GPU pero no es compatible con este build de PyTorch ({exc}). "
-                  f"En Kaggle esto pasa con el acelerador 'GPU P100' (arquitectura Pascal, sm_60): el "
-                  f"PyTorch preinstalado solo soporta sm_70 en adelante. Cambia el acelerador del notebook "
-                  f"a 'GPU T4 x2' (Settings -> Accelerator) y vuelve a ejecutar. Cayendo a CPU por ahora "
-                  f"(será muy lento; usa --quick para una prueba).")
+        except RuntimeError:
+            print("AVISO: GPU incompatible con este PyTorch.")
             device = torch.device("cpu")
     if device.type == "cpu":
-        print("AVISO: ejecutando la ResNet-18 en CPU. A 224x224 con muchos puntos de barrido por "
-              "semilla será muy lento; usa --quick para una prueba rápida, o --no-resnet18 para omitirla.")
+        print("AVISO: ejecutando en CPU.")
     return device
 
 def radial_frequency_grid_centered(height: int, width: int) -> np.ndarray:
@@ -531,7 +526,7 @@ def run_seed_resnet(dataset: str, cfg: ExperimentConfig, seed: int, backbone: nn
     spec = DATASET_SPECS[dataset]
     height, width = spec["image_shape"]
 
-    print(f"  [ResNet-18 seed={seed}] extrayendo features y entrenando cabeza lineal...")
+    print(f"  [ResNet-18 seed={seed}] extrayendo features")
     set_seed(seed)
     data = load_dataset_three_way(dataset, cfg, seed)
 
@@ -624,17 +619,6 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
             f"| {result['display_name']} "
             f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp |"
         )
-    lines += [
-        "",
-        "Los estadisticos de la SRF (E[R], sigma[R], mediana, moda, H) no se "
-        "calculan en este script: se recalculan a partir de \"rows\" (guardados "
-        "por semilla y variante) en estadisticos_discretos.py / "
-        "estadisticos_discretos_completos.py, que es donde se compara si la "
-        "activación cambia la forma de la SRF aunque la precisión final apenas "
-        "cambie. La fila de ResNet-18 es una referencia fija (backbone "
-        "congelado, sin variar activación).",
-        "",
-    ]
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 def main() -> None:

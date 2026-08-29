@@ -623,15 +623,6 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
         for entry in result["per_seed"]:
             lines.append(f"| {entry['seed']} | {entry['baseline_accuracy']*100:.2f}% |")
 
-    lines += [
-        "",
-        "Los estadisticos de la SRF (E[R], sigma[R], mediana, moda, H) no se "
-        "calculan en este script: se recalculan a partir de \"rows\" (guardados "
-        "por semilla) en estadisticos_discretos.py / estadisticos_discretos_completos.py, "
-        "que es donde se comprueba la reproducibilidad frente a la semilla de cada "
-        "arquitectura.",
-        "",
-    ]
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 def resolve_torch_device() -> torch.device:
@@ -639,16 +630,11 @@ def resolve_torch_device() -> torch.device:
     if device.type == "cuda":
         try:
             _ = torch.zeros(1, device=device) + 1.0
-        except RuntimeError as exc:
-            print(f"AVISO: se detectó GPU pero no es compatible con este build de PyTorch ({exc}). "
-                  f"En Kaggle esto pasa con el acelerador 'GPU P100' (arquitectura Pascal, sm_60): el "
-                  f"PyTorch preinstalado solo soporta sm_70 en adelante. Cambia el acelerador del notebook "
-                  f"a 'GPU T4 x2' (Settings -> Accelerator) y vuelve a ejecutar. Cayendo a CPU por ahora "
-                  f"(será muy lento; usa --quick para una prueba).")
+        except RuntimeError:
+            print("AVISO: GPU incompatible con PyTorch.")
             device = torch.device("cpu")
     if device.type == "cpu":
-        print("AVISO: ejecutando la ResNet-18 en CPU. A 224x224 con muchos puntos de barrido por "
-              "semilla será muy lento; usa --quick para una prueba rápida o ejecuta en un entorno con GPU compatible.")
+        print("AVISO: ejecutando en CPU.")
     return device
 
 def main() -> None:

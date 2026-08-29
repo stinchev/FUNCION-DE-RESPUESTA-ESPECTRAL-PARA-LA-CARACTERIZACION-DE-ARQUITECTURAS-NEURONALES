@@ -1,6 +1,4 @@
-# Estadisticos discretos de la SRF -- VARIANTE SUMATORIO LITERAL (Capitulos 3-5)
-
-Formula literal del texto: E[R]=sum r_i p_i, sigma[R]=sqrt(sum (r_i-E[R])^2 p_i). NO coincide con los numeros ya publicados en el TFG/articulo (esos usan integrales/trapecios). Solo para comparacion.
+# Estadisticos discretos de la SRF
 
 ## Tabla 3.1 — SRF por conjunto de datos y arquitectura
 
@@ -49,7 +47,3 @@ Formula literal del texto: E[R]=sum r_i p_i, sigma[R]=sqrt(sum (r_i-E[R])^2 p_i)
 | Fashion-MNIST | 1 | 87.84%±0.00pp | 0.3181±0.0000 | 0.1849±0.0000 | 0.3072±0.0000 | 0.1129±0.0000 | 2.4752±0.0000 |
 | KMNIST | 1 | 80.66%±0.00pp | 0.3968±0.0000 | 0.2106±0.0000 | 0.3388±0.0000 | 0.2525±0.0000 | 3.0258±0.0000 |
 | CIFAR-10 (gris) | 1 | 86.48%±0.00pp | 0.4035±0.0000 | 0.1324±0.0000 | 0.4075±0.0000 | 0.2577±0.0000 | 2.9474±0.0000 |
-
----
-
-Nota: esta variante es solo para comparar con estadisticos_discretos_completos.py (la version con integrales/trapecios, que es la que coincide con los numeros ya publicados). No copiar estos numeros al TFG ni al articulo.

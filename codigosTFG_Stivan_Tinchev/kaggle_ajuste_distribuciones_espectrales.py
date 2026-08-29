@@ -10,12 +10,6 @@ from scipy.optimize import minimize
 
 _trapz = getattr(np, "trapezoid", None) or np.trapz
 
-LOCAL_NETWORKS = {
-    "CNN pequena": Path(r"C:\Users\stst1\Downloads\results (52)\spectral_cdf_outputs\20260728_171111"),
-    "ResNet-18 congelada": Path(r"C:\Users\stst1\Downloads\results (53)\resnet18_spectral_cdf_outputs\20260728_171133"),
-}
-LOCAL_OUTPUT_DIR = Path(r"C:\Users\stst1\Downloads\spectral_distribution_fits")
-
 DATASETS = ["mnist", "fashion_mnist", "kmnist", "cifar10"]
 DISPLAY = {"mnist": "MNIST", "fashion_mnist": "Fashion-MNIST", "kmnist": "KMNIST", "cifar10": "CIFAR-10 (gris)"}
 
@@ -38,22 +32,15 @@ def find_output_dir(roots: list[Path], folder_names: list[str]) -> Path:
 
 def default_networks() -> dict[str, Path]:
     kaggle_roots = [Path("/kaggle/working"), Path("/kaggle/input")]
-    if any(root.exists() for root in kaggle_roots):
-        try:
-            return {
-                "CNN pequena": find_output_dir(kaggle_roots, ["spectral_cdf_outputs_en", "spectral_cdf_outputs"]),
-                "ResNet-18 congelada": find_output_dir(
-                    kaggle_roots, ["resnet18_spectral_cdf_outputs_en", "resnet18_spectral_cdf_outputs"]
-                ),
-            }
-        except FileNotFoundError as exc:
-            print(f"{exc}\nUsando LOCAL_NETWORKS como alternativa.")
-    return LOCAL_NETWORKS
+    return {
+        "CNN pequena": find_output_dir(kaggle_roots, ["spectral_cdf_outputs_en", "spectral_cdf_outputs"]),
+        "ResNet-18 congelada": find_output_dir(
+            kaggle_roots, ["resnet18_spectral_cdf_outputs_en", "resnet18_spectral_cdf_outputs"]
+        ),
+    }
 
 def default_output_dir() -> Path:
-    if Path("/kaggle/working").exists():
-        return Path("/kaggle/working/spectral_distribution_fits")
-    return LOCAL_OUTPUT_DIR
+    return Path("/kaggle/working/spectral_distribution_fits")
 
 NETWORKS = default_networks()
 OUTPUT_DIR = default_output_dir()
@@ -192,12 +179,6 @@ def build_report(all_results: dict, output_dir: Path) -> None:
             f"{data['gaussian_entropy']:.4f} | {data['entropy_gap']:.4f} |"
         )
     lines += [
-        "",
-        "`E[r]` es el estadístico de referencia recomendado (un único número por dataset/red que resume "
-        "\"cuánto espectro necesita\" esa combinación). El `hueco de entropía` (entropía de una Normal con "
-        "la misma varianza menos la entropía real) es un diagnóstico de forma: valores altos indican que "
-        "la SRF real es más estructurada/compleja (p.ej. meseta o bimodalidad) de lo que capturaría el "
-        "par (E[r], std[r]) por sí solo — esto ocurre de forma notable en ResNet-18/MNIST.",
         "",
         "## Índice de desajuste espectral (E[r]_ResNet-18 / E[r]_CNN) por dataset",
         "",

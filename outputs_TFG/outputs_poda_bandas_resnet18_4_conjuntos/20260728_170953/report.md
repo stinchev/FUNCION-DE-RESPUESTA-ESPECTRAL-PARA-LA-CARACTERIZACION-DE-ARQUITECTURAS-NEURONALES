@@ -1,10 +1,5 @@
 # Poda de bandas con ResNet-18 congelada (barrido progresivo + eliminación completa), 4 datasets
 
-## Setup
-- Seeds: `[42, 43, 44]`
-- Paso del barrido progresivo: `5%`
-- Subconjunto de test para el barrido progresivo: `2000`
-
 ## MNIST
 - Accuracy base (test completo): `97.76% ± 0.05pp`
 

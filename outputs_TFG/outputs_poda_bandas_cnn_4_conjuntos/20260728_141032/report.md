@@ -1,9 +1,5 @@
 # Poda de bandas de la CNN (barrido progresivo + eliminación completa), 4 datasets
 
-## Setup
-- Seeds: `[42, 43, 44]`
-- Paso del barrido progresivo: `5%`
-
 ## MNIST
 - Accuracy base: `99.32% ± 0.07pp`
 

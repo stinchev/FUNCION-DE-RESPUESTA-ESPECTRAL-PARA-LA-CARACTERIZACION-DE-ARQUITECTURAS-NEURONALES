@@ -559,13 +559,10 @@ def main() -> None:
         try:
             _ = torch.zeros(1, device=device) + 1.0
         except RuntimeError as exc:
-            print(f"AVISO: GPU detectada pero incompatible con este build de PyTorch ({exc}). "
-                  f"En Kaggle, cambia el acelerador a 'GPU T4 x2'. Cayendo a CPU (sera muy lento).")
+            print(f"AVISO: GPU detectada pero incompatible con PyTorch ({exc}). ")
             device = torch.device("cpu")
     if device.type == "cpu":
-        print("AVISO: ejecutando en CPU. Este experimento entrena una red completa por cada etapa de "
-              "descongelado y hace un barrido SRF completo en cada una; sera extremadamente lento. Usa --quick "
-              "para una prueba rapida, o ejecuta esto en un entorno con GPU.")
+        print("AVISO: ejecutando en CPU.")
     print(f"Device: {device}")
     print("Arquitectura: resnet18")
     print(f"Datasets: {cfg.datasets}")

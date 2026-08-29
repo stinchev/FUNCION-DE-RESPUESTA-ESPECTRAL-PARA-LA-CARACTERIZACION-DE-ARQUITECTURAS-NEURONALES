@@ -464,19 +464,7 @@ def save_ae_plot(result: dict[str, Any], output_path: Path) -> None:
 
 def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str, Any]]) -> None:
     lines = [
-        "# Anexo exploratorio: SRF de un autoencoder (clasificación en espacio latente)",
-        "",
-        "**Aviso:** este experimento no forma parte del análisis comparativo riguroso de los "
-        "Capítulos 2 y 3. Es un estudio exploratorio, a mano alzada, para comprobar si la SRF "
-        "de una arquitectura de naturaleza distinta (con un objetivo de reconstrucción y una "
-        "dimensión de espacio latente que no existen en la CNN ni en la ResNet-18) se comporta "
-        "de forma distinta. Se deja como avance de trabajo futuro, no como una conclusión firme.",
-        "",
-        "## Setup",
-        f"- Semillas: `{cfg.seeds}`",
-        f"- Dimensión del espacio latente: `{cfg.latent_dim}`",
-        f"- Puntos por curva: `{cfg.n_points}`",
-        f"- Subconjunto de test para el barrido: `{cfg.eval_subset_size if cfg.eval_subset_size > 0 else 'completo'}`",
+        "# SRF de un autoencoder (clasificación en espacio latente)",
         "",
         "| Dataset | Accuracy base | MSE reconstrucción |",
         "|---|---|---|",
@@ -488,13 +476,6 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
             f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp "
             f"| {agg['reconstruction_mse']['mean']:.5f} ± {agg['reconstruction_mse']['std']:.5f} |"
         )
-    lines += [
-        "",
-        "Los estadisticos de la SRF (E[R], sigma[R], mediana, moda, H) no se "
-        "calculan en este script: se recalculan a partir de \"rows\" (guardados "
-        "por semilla) en estadisticos_discretos.py / estadisticos_discretos_completos.py.",
-        "",
-    ]
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 def main() -> None:

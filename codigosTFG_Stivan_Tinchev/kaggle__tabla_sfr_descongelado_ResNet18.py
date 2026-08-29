@@ -78,7 +78,7 @@ def find_metrics_path() -> Path:
                 return sorted(matches, key=lambda p: p.stat().st_mtime)[-1]
     raise FileNotFoundError(
         "No se encontro mnist_all_stages_metrics.json bajo /kaggle/working ni "
-        "/kaggle/input. Ejecuta antes el notebook de entrenamiento con descongelado progresivo."
+        "/kaggle/input."
     )
 
 

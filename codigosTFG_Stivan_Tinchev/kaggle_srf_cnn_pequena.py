@@ -416,10 +416,6 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
     lines = [
         "# Barrido espectral acumulativo + CDF (MNIST / Fashion-MNIST / KMNIST / CIFAR-10 gris)",
         "",
-        "## Setup",
-        f"- Seeds: `{cfg.seeds}`",
-        f"- Puntos por curva: `{cfg.n_points}`",
-        "",
         "## Accuracy base (media ± desv. típica entre semillas)",
         "",
         "| Dataset | Accuracy base |",
@@ -431,13 +427,6 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
             f"| {result['display_name']} "
             f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp |"
         )
-    lines += [
-        "",
-        "Los estadisticos de la SRF (E[R], sigma[R], mediana, moda, H) no se "
-        "calculan en este script: se recalculan a partir de \"per_seed_rows\" "
-        "en estadisticos_discretos.py / estadisticos_discretos_completos.py.",
-        "",
-    ]
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 def main() -> None:

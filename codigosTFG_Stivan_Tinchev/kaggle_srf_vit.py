@@ -395,7 +395,7 @@ def run_seed(dataset: str, cfg: ExperimentConfig, seed: int, backbone: nn.Module
     spec = DATASET_SPECS[dataset]
     height, width = spec["image_shape"]
 
-    print(f"  [seed={seed}] extrayendo features del ViT-B/16 congelado y entrenando cabeza lineal...")
+    print(f"  [seed={seed}] extrayendo features del ViT-B/16 congelado ")
     set_seed(seed)
     data = load_dataset_three_way(dataset, cfg, seed)
 
@@ -471,13 +471,6 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
     lines = [
         "# Anexo exploratorio: SRF de un ViT-B/16 preentrenado y congelado (linear probe)",
         "",
-        "**Aviso:** este experimento no forma parte del análisis comparativo riguroso de los "
-        "Capítulos 2 y 3. Es un estudio exploratorio, a mano alzada, motivado por la curiosidad "
-        "de comprobar si una arquitectura basada en atención se comporta de forma distinta a la "
-        "CNN y a la ResNet-18. No pretende ser un análisis exhaustivo de los muchos grados de "
-        "libertad de diseño de un ViT (tamaño de parche, profundidad, número de cabezas, etc.); "
-        "se deja como avance de trabajo futuro.",
-        "",
         "## Setup",
         f"- Semillas: `{cfg.seeds}`",
         f"- Puntos por curva: `{cfg.n_points}`",
@@ -492,13 +485,6 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
             f"| {result['display_name']} "
             f"| {agg['baseline_accuracy']['mean']*100:.2f}% ± {agg['baseline_accuracy']['std']*100:.2f}pp |"
         )
-    lines += [
-        "",
-        "Los estadisticos de la SRF (E[R], sigma[R], mediana, moda, H) no se "
-        "calculan en este script: se recalculan a partir de \"rows\" (guardados "
-        "por semilla) en estadisticos_discretos.py / estadisticos_discretos_completos.py.",
-        "",
-    ]
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 def main() -> None:
@@ -508,15 +494,11 @@ def main() -> None:
     if device.type == "cuda":
         try:
             _ = torch.zeros(1, device=device) + 1.0
-        except RuntimeError as exc:
-            print(f"AVISO: se detectó GPU pero no es compatible con este build de PyTorch ({exc}). "
-                  f"En Kaggle esto pasa con el acelerador 'GPU P100' (arquitectura Pascal, sm_60): el "
-                  f"PyTorch preinstalado solo soporta sm_70 en adelante. Cambia el acelerador del notebook "
-                  f"a 'GPU T4 x2' (Settings -> Accelerator) y vuelve a ejecutar. Cayendo a CPU por ahora "
-                  f"(será muy lento; usa --quick para una prueba).")
+        except RuntimeError:
+            print("AVISO: GPU incompatible con este PyTorch.")
             device = torch.device("cpu")
     if device.type == "cpu":
-        print("AVISO: ejecutando en CPU. ViT-B/16 a 224x224 será muy lento; usa --quick para una prueba rápida.")
+        print("AVISO: ejecutando en CPU.")
     print(f"Dispositivo: {device}")
     print(f"Conjuntos de datos: {cfg.datasets}  |  Semillas: {cfg.seeds}")
     print(f"Directorio de salida: {output_dir.resolve()}")

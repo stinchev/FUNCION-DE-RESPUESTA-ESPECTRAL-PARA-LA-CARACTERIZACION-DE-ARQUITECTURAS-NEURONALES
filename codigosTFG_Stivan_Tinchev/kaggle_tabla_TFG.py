@@ -135,9 +135,7 @@ def resolve_paths() -> dict[str, Path]:
         found = find_output_dir(kaggle_roots, folder_names)
         if found is None:
             raise FileNotFoundError(
-                f"No se encontro la carpeta de salida de '{key}' bajo /kaggle/working ni "
-                f"/kaggle/input. Ejecuta antes el notebook del experimento correspondiente."
-            )
+                f"No se encontro la carpeta de salida de '{key}' bajo /kaggle/working ni /kaggle/input. ")
         resolved[key] = found
     return resolved
 

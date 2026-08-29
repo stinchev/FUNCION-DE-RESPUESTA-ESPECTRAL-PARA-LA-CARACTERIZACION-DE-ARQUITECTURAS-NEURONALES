@@ -484,10 +484,6 @@ def build_report(output_dir: Path, cfg: ExperimentConfig, results: list[dict[str
     lines = [
         "# Poda de bandas de la CNN (barrido progresivo + eliminación completa), 4 datasets",
         "",
-        "## Setup",
-        f"- Seeds: `{cfg.seeds}`",
-        f"- Paso del barrido progresivo: `{cfg.ablation_step*100:.0f}%`",
-        "",
     ]
     for result in results:
         agg = result["aggregate"]
